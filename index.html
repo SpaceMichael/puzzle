@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>拼圖遊戲</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 10px;
+      color: #e94560;
+      text-shadow: 0 0 10px #e9456088;
+    }
+
+    #controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    label.btn, button {
+      background: #e94560;
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background 0.2s;
+    }
+
+    label.btn:hover, button:hover { background: #c73652; }
+
+    #fileInput { display: none; }
+
+    #status {
+      font-size: 1rem;
+      margin-bottom: 14px;
+      color: #aaa;
+      min-height: 24px;
+    }
+
+    #gameArea {
+      display: flex;
+      gap: 30px;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: flex-start;
+    }
+
+    .grid-container { text-align: center; }
+    .grid-label {
+      font-size: 0.9rem;
+      color: #888;
+      margin-bottom: 6px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 100px);
+      grid-template-rows: repeat(4, 100px);
+      gap: 3px;
+      background: #16213e;
+      padding: 6px;
+      border-radius: 10px;
+      border: 2px solid #0f3460;
+    }
+
+    .piece {
+      width: 100px;
+      height: 100px;
+      background-size: 400px 400px;
+      border-radius: 4px;
+      cursor: grab;
+      border: 2px solid transparent;
+      transition: transform 0.1s, border-color 0.2s;
+    }
+
+    .piece:active { cursor: grabbing; transform: scale(1.05); }
+    .piece.dragging { opacity: 0.5; border-color: #e94560; }
+    .piece.correct { border-color: #4caf50 !important; }
+
+    .slot {
+      width: 100px;
+      height: 100px;
+      background: #0f3460;
+      border-radius: 4px;
+      border: 2px dashed #444;
+      position: relative;
+      transition: border-color 0.2s;
+    }
+
+    .slot.drag-over { border-color: #e94560; background: #1a2a4a; }
+
+    #winMessage {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #000000cc;
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    #winMessage.show { display: flex; }
+
+    #winMessage h2 {
+      font-size: 3rem;
+      color: #ffd700;
+      text-shadow: 0 0 20px #ffd700;
+      animation: pulse 1s infinite alternate;
+    }
+
+    @keyframes pulse {
+      from { transform: scale(1); }
+      to   { transform: scale(1.1); }
+    }
+
+    #winMessage button {
+      font-size: 1.2rem;
+      padding: 12px 30px;
+      background: #4caf50;
+    }
+
+    #winMessage button:hover { background: #388e3c; }
+
+    #preview img {
+      max-width: 200px;
+      max-height: 200px;
+      border-radius: 8px;
+      border: 2px solid #0f3460;
+      display: none;
+      margin-bottom: 14px;
+    }
+  </style>
+</head>
+<body>
+
+<h1>🧩 拼圖遊戲</h1>
+
+<div id="controls">
+  <label class="btn" for="fileInput">📷 上傳照片</label>
+  <input type="file" id="fileInput" accept="image/*" />
+  <button id="shuffleBtn" style="display:none">🔀 重新打亂</button>
+</div>
+
+<div id="preview"><img id="previewImg" alt="原圖預覽" /></div>
+<div id="status">請上傳一張照片開始遊戲 ⬆️</div>
+
+<div id="gameArea">
+  <div class="grid-container">
+    <div class="grid-label">打亂區（拖動拼圖）</div>
+    <div class="grid" id="puzzleGrid"></div>
+  </div>
+  <div class="grid-container">
+    <div class="grid-label">目標位置（拼回原圖）</div>
+    <div class="grid" id="targetGrid"></div>
+  </div>
+</div>
+
+<div id="winMessage">
+  <h2>🎉 恭喜完成！ 🎉</h2>
+  <button onclick="closeWin()">再玩一次</button>
+</div>
+
+<canvas id="canvas" style="display:none"></canvas>
+
+<script>
+  const GRID = 4;
+  const PIECE_SIZE = 100;
+
+  let pieces    = [];
+  let slots     = [];
+  let slotData  = [];
+  let dragSrcPieceId = null;
+  let dragSrcSlotIdx = null;
+  let currentDataUrl = null;
+
+  const fileInput  = document.getElementById('fileInput');
+  const shuffleBtn = document.getElementById('shuffleBtn');
+  const puzzleGrid = document.getElementById('puzzleGrid');
+  const targetGrid = document.getElementById('targetGrid');
+  const statusEl   = document.getElementById('status');
+  const canvas     = document.getElementById('canvas');
+  const winMessage = document.getElementById('winMessage');
+  const previewImg = document.getElementById('previewImg');
+
+  fileInput.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      previewImg.src = ev.target.result;
+      previewImg.style.display = 'block';
+      prepareImage(ev.target.result);
+    };
+    reader.readAsDataURL(file);
+  });
+
+  shuffleBtn.addEventListener('click', () => {
+    if (currentDataUrl) buildPuzzle(currentDataUrl);
+  });
+
+  function prepareImage(src) {
+    const img = new Image();
+    img.onload = () => {
+      const size = PIECE_SIZE * GRID;
+      canvas.width  = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const s  = Math.min(img.width, img.height);
+      const sx = (img.width  - s) / 2;
+      const sy = (img.height - s) / 2;
+      ctx.drawImage(img, sx, sy, s, s, 0, 0, size, size);
+      currentDataUrl = canvas.toDataURL();
+      buildPuzzle(currentDataUrl);
+    };
+    img.src = src;
+  }
+
+  function buildPuzzle(dataUrl) {
+    pieces   = [];
+    slotData = new Array(GRID * GRID).fill(null);
+    puzzleGrid.innerHTML = '';
+    targetGrid.innerHTML = '';
+    slots = [];
+
+    for (let i = 0; i < GRID * GRID; i++) {
+      const col = i % GRID;
+      const row = Math.floor(i / GRID);
+      const el  = document.createElement('div');
+      el.className = 'piece';
+      el.dataset.id = i;
+      el.style.backgroundImage    = `url('${dataUrl}')`;
+      el.style.backgroundSize     = `${PIECE_SIZE * GRID}px ${PIECE_SIZE * GRID}px`;
+      el.style.backgroundPosition = `${-col * PIECE_SIZE}px ${-row * PIECE_SIZE}px`;
+      el.draggable = true;
+      pieces.push({ id: i, el });
+    }
+
+    [...pieces].sort(() => Math.random() - 0.5).forEach(p => puzzleGrid.appendChild(p.el));
+
+    for (let i = 0; i < GRID * GRID; i++) {
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      slot.dataset.slotIdx = i;
+      targetGrid.appendChild(slot);
+      slots.push(slot);
+    }
+
+    attachDragEvents();
+    shuffleBtn.style.display = '';
+    winMessage.classList.remove('show');
+    statusEl.textContent = '拖動左邊的拼圖塊放入右邊正確的格子 →';
+  }
+
+  function attachDragEvents() {
+    pieces.forEach(p => {
+      p.el.addEventListener('dragstart', e => {
+        dragSrcPieceId = p.id;
+        dragSrcSlotIdx = p.el.parentElement.classList.contains('slot')
+          ? +p.el.parentElement.dataset.slotIdx : null;
+        p.el.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      p.el.addEventListener('dragend', () => p.el.classList.remove('dragging'));
+      p.el.addEventListener('touchstart', onTouchStart, { passive: true });
+    });
+
+    slots.forEach(slot => {
+      slot.addEventListener('dragover',  e => { e.preventDefault(); slot.classList.add('drag-over'); });
+      slot.addEventListener('dragleave', ()  => slot.classList.remove('drag-over'));
+      slot.addEventListener('drop',      e   => { e.preventDefault(); dropIntoSlot(slot); });
+    });
+
+    puzzleGrid.addEventListener('dragover',  e => e.preventDefault());
+    puzzleGrid.addEventListener('drop', e => { e.preventDefault(); returnToPool(); });
+  }
+
+  function dropIntoSlot(slot) {
+    slot.classList.remove('drag-over');
+    const targetIdx = +slot.dataset.slotIdx;
+    const piece     = pieces[dragSrcPieceId];
+    if (!piece) return;
+
+    const occupantId = slotData[targetIdx];
+    if (occupantId !== null && occupantId !== dragSrcPieceId) {
+      const occupant = pieces[occupantId];
+      if (dragSrcSlotIdx !== null) {
+        slotData[dragSrcSlotIdx] = occupantId;
+        slots[dragSrcSlotIdx].appendChild(occupant.el);
+      } else {
+        puzzleGrid.appendChild(occupant.el);
+      }
+    }
+
+    if (dragSrcSlotIdx !== null) slotData[dragSrcSlotIdx] = null;
+
+    slot.innerHTML = '';
+    slot.appendChild(piece.el);
+    slotData[targetIdx] = dragSrcPieceId;
+
+    checkWin();
+    dragSrcPieceId = null;
+    dragSrcSlotIdx = null;
+  }
+
+  function returnToPool() {
+    if (dragSrcPieceId === null) return;
+    const piece = pieces[dragSrcPieceId];
+    if (dragSrcSlotIdx !== null) slotData[dragSrcSlotIdx] = null;
+    puzzleGrid.appendChild(piece.el);
+    piece.el.classList.remove('correct');
+    dragSrcPieceId = null;
+    dragSrcSlotIdx = null;
+    checkWin();
+  }
+
+  let touchPiece = null, touchClone = null;
+
+  function onTouchStart(e) {
+    const p = pieces[+e.currentTarget.dataset.id];
+    touchPiece = p;
+    dragSrcPieceId = p.id;
+    dragSrcSlotIdx = p.el.parentElement.classList.contains('slot')
+      ? +p.el.parentElement.dataset.slotIdx : null;
+
+    const t = e.touches[0];
+    touchClone = p.el.cloneNode(false);
+    Object.assign(touchClone.style, {
+      position: 'fixed', width: PIECE_SIZE+'px', height: PIECE_SIZE+'px',
+      opacity: '0.75', zIndex: '999', pointerEvents: 'none',
+      left: (t.clientX - PIECE_SIZE/2)+'px', top: (t.clientY - PIECE_SIZE/2)+'px'
+    });
+    document.body.appendChild(touchClone);
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend',  onTouchEnd);
+  }
+
+  function onTouchMove(e) {
+    e.preventDefault();
+    const t = e.touches[0];
+    touchClone.style.left = (t.clientX - PIECE_SIZE/2)+'px';
+    touchClone.style.top  = (t.clientY - PIECE_SIZE/2)+'px';
+    slots.forEach(s => s.classList.remove('drag-over'));
+    const under = document.elementFromPoint(t.clientX, t.clientY);
+    const slot  = under && under.closest('.slot');
+    if (slot) slot.classList.add('drag-over');
+  }
+
+  function onTouchEnd(e) {
+    document.removeEventListener('touchmove', onTouchMove);
+    document.removeEventListener('touchend',  onTouchEnd);
+    touchClone && touchClone.remove(); touchClone = null;
+    slots.forEach(s => s.classList.remove('drag-over'));
+    const t     = e.changedTouches[0];
+    const under = document.elementFromPoint(t.clientX, t.clientY);
+    const slot  = under && under.closest('.slot');
+    if (slot) dropIntoSlot(slot);
+    else      returnToPool();
+    touchPiece = null;
+  }
+
+  function checkWin() {
+    pieces.forEach(p => p.el.classList.remove('correct'));
+    const correct = slotData.filter((id, idx) => id === idx).length;
+    slotData.forEach((id, idx) => {
+      if (id === idx && id !== null) pieces[id].el.classList.add('correct');
+    });
+    if (correct === GRID * GRID) {
+      statusEl.textContent = '🎉 完成！所有拼圖都係正確位置！';
+      setTimeout(() => winMessage.classList.add('show'), 500);
+    } else {
+      statusEl.textContent = `已拼好 ${correct} / ${GRID * GRID} 塊`;
+    }
+  }
+
+  function closeWin() {
+    winMessage.classList.remove('show');
+    if (currentDataUrl) buildPuzzle(currentDataUrl);
+  }
+</script>
+</body>
+</html>
