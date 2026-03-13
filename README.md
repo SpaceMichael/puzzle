@@ -20,4 +20,8 @@
 1. 打開 `index.html` 就能在瀏覽器直接遊玩。
 2. 建議使用最新版本的 Chrome/Safari/Edge 以確保拖放與觸控最順暢。
 
+## GitHub Pages
+
+- 線上網址：`https://spacemichael.github.io/puzzle/`
+
 歡迎和小朋友一起探索，讓學習與創意同時動動手！🎉🧩
