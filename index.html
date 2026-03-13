@@ -56,11 +56,8 @@
     }
 
     #gameArea {
-      display: flex;
-      gap: 30px;
-      flex-wrap: wrap;
-      justify-content: center;
-      align-items: flex-start;
+      width: min(95vw, 440px);
+      margin: 0 auto;
     }
 
     .grid-container { text-align: center; }
@@ -71,19 +68,23 @@
     }
 
     .grid {
+      --grid-max: min(90vw, 420px);
+      --piece-size: min(100px, calc((var(--grid-max) - 21px) / 4));
+      width: var(--grid-max);
       display: grid;
-      grid-template-columns: repeat(4, 100px);
-      grid-template-rows: repeat(4, 100px);
+      grid-template-columns: repeat(4, var(--piece-size));
+      grid-template-rows: repeat(4, var(--piece-size));
       gap: 3px;
       background: #16213e;
       padding: 6px;
       border-radius: 10px;
       border: 2px solid #0f3460;
+      margin: 0 auto;
     }
 
     .piece {
-      width: 100px;
-      height: 100px;
+      width: var(--piece-size);
+      height: var(--piece-size);
       background-size: 400px 400px;
       border-radius: 4px;
       cursor: grab;
@@ -96,8 +97,8 @@
     .piece.correct { border-color: #4caf50 !important; }
 
     .slot {
-      width: 100px;
-      height: 100px;
+      width: var(--piece-size);
+      height: var(--piece-size);
       background: #0f3460;
       border-radius: 4px;
       border: 2px dashed #444;
@@ -166,12 +167,8 @@
 
 <div id="gameArea">
   <div class="grid-container">
-    <div class="grid-label">打亂區（拖動拼圖）</div>
-    <div class="grid" id="puzzleGrid"></div>
-  </div>
-  <div class="grid-container">
-    <div class="grid-label">目標位置（拼回原圖）</div>
-    <div class="grid" id="targetGrid"></div>
+    <div class="grid-label">拼圖區（拖動拼圖還原圖片）</div>
+    <div class="grid" id="gameGrid"></div>
   </div>
 </div>
 
@@ -195,8 +192,7 @@
 
   const fileInput  = document.getElementById('fileInput');
   const shuffleBtn = document.getElementById('shuffleBtn');
-  const puzzleGrid = document.getElementById('puzzleGrid');
-  const targetGrid = document.getElementById('targetGrid');
+  const gameGrid   = document.getElementById('gameGrid');
   const statusEl   = document.getElementById('status');
   const canvas     = document.getElementById('canvas');
   const winMessage = document.getElementById('winMessage');
@@ -238,9 +234,16 @@
   function buildPuzzle(dataUrl) {
     pieces   = [];
     slotData = new Array(GRID * GRID).fill(null);
-    puzzleGrid.innerHTML = '';
-    targetGrid.innerHTML = '';
+    gameGrid.innerHTML = '';
     slots = [];
+
+    for (let i = 0; i < GRID * GRID; i++) {
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      slot.dataset.slotIdx = i;
+      gameGrid.appendChild(slot);
+      slots.push(slot);
+    }
 
     for (let i = 0; i < GRID * GRID; i++) {
       const col = i % GRID;
@@ -255,20 +258,15 @@
       pieces.push({ id: i, el });
     }
 
-    [...pieces].sort(() => Math.random() - 0.5).forEach(p => puzzleGrid.appendChild(p.el));
-
-    for (let i = 0; i < GRID * GRID; i++) {
-      const slot = document.createElement('div');
-      slot.className = 'slot';
-      slot.dataset.slotIdx = i;
-      targetGrid.appendChild(slot);
-      slots.push(slot);
-    }
+    [...pieces].sort(() => Math.random() - 0.5).forEach((piece, idx) => {
+      slotData[idx] = piece.id;
+      slots[idx].appendChild(piece.el);
+    });
 
     attachDragEvents();
     shuffleBtn.style.display = '';
     winMessage.classList.remove('show');
-    statusEl.textContent = '拖動左邊的拼圖塊放入右邊正確的格子 →';
+    statusEl.textContent = '在格子中拖動拼圖塊還原圖片';
   }
 
   function attachDragEvents() {
@@ -290,43 +288,52 @@
       slot.addEventListener('drop',      e   => { e.preventDefault(); dropIntoSlot(slot); });
     });
 
-    puzzleGrid.addEventListener('dragover',  e => e.preventDefault());
-    puzzleGrid.addEventListener('drop', e => { e.preventDefault(); returnToPool(); });
   }
 
   function dropIntoSlot(slot) {
     slot.classList.remove('drag-over');
+    if (dragSrcPieceId === null) return;
     const targetIdx = +slot.dataset.slotIdx;
-    const piece     = pieces[dragSrcPieceId];
-    if (!piece) return;
-
-    const occupantId = slotData[targetIdx];
-    if (occupantId !== null && occupantId !== dragSrcPieceId) {
-      const occupant = pieces[occupantId];
-      if (dragSrcSlotIdx !== null) {
-        slotData[dragSrcSlotIdx] = occupantId;
-        slots[dragSrcSlotIdx].appendChild(occupant.el);
-      } else {
-        puzzleGrid.appendChild(occupant.el);
-      }
+    if (dragSrcSlotIdx === targetIdx) {
+      dragSrcPieceId = null;
+      dragSrcSlotIdx = null;
+      return;
     }
 
-    if (dragSrcSlotIdx !== null) slotData[dragSrcSlotIdx] = null;
+    const piece = pieces[dragSrcPieceId];
+    if (!piece) return;
+
+    const sourceIdx  = dragSrcSlotIdx;
+    const occupantId = slotData[targetIdx];
 
     slot.innerHTML = '';
     slot.appendChild(piece.el);
     slotData[targetIdx] = dragSrcPieceId;
+
+    if (sourceIdx !== null) {
+      slots[sourceIdx].innerHTML = '';
+      if (occupantId !== null) {
+        slots[sourceIdx].appendChild(pieces[occupantId].el);
+        slotData[sourceIdx] = occupantId;
+      } else {
+        slotData[sourceIdx] = null;
+      }
+    }
 
     checkWin();
     dragSrcPieceId = null;
     dragSrcSlotIdx = null;
   }
 
-  function returnToPool() {
+  function returnToSlot() {
     if (dragSrcPieceId === null) return;
     const piece = pieces[dragSrcPieceId];
-    if (dragSrcSlotIdx !== null) slotData[dragSrcSlotIdx] = null;
-    puzzleGrid.appendChild(piece.el);
+    const sourceIdx = dragSrcSlotIdx;
+    if (sourceIdx !== null) {
+      slots[sourceIdx].innerHTML = '';
+      slots[sourceIdx].appendChild(piece.el);
+      slotData[sourceIdx] = dragSrcPieceId;
+    }
     piece.el.classList.remove('correct');
     dragSrcPieceId = null;
     dragSrcSlotIdx = null;
@@ -374,7 +381,7 @@
     const under = document.elementFromPoint(t.clientX, t.clientY);
     const slot  = under && under.closest('.slot');
     if (slot) dropIntoSlot(slot);
-    else      returnToPool();
+    else      returnToSlot();
     touchPiece = null;
   }
 
